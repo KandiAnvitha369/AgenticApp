@@ -10,14 +10,12 @@ def load_all_documents(data_dir: str = "data") -> List[Any]:
     Load all supported files from the data directory and convert to LangChain document structure.
     Supported: PDF, TXT, CSV, Excel, Word, JSON
     """
-    data_path = Path(data_dir).resolve()
-    if not data_path.exists():
-        # Fallback to project root if executed from subfolder
+    data_path = Path(data_dir)
+    if not data_path.is_absolute():
         project_root = Path(__file__).resolve().parent.parent.parent
-        fallback_path = (project_root / data_dir).resolve()
-        if fallback_path.exists():
-            data_path = fallback_path
+        data_path = project_root / data_dir
 
+    data_path = data_path.resolve()
     print(f"[DEBUG] Data path: {data_path}")
     documents = []
 

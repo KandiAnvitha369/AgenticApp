@@ -9,14 +9,14 @@ from chatbot.embedding import EmbeddingPipeline
 
 class FaissVectorStore:
     def __init__(self, persist_dir: str = "faiss_store", embedding_model: str = "all-MiniLM-L6-v2", chunk_size: int = 1000, chunk_overlap: int = 200):
-        # Fallback to project root if persist_dir does not exist in current working directory
-        if not os.path.exists(persist_dir):
+        # Always resolve relative persist_dir to project root (parallel to src/)
+        persist_path = Path(persist_dir)
+        if not persist_path.is_absolute():
             project_root = Path(__file__).resolve().parent.parent.parent
-            fallback_dir = project_root / persist_dir
-            if fallback_dir.exists():
-                persist_dir = str(fallback_dir)
-        self.persist_dir = persist_dir
+            persist_path = project_root / persist_dir
+        self.persist_dir = str(persist_path.resolve())
         os.makedirs(self.persist_dir, exist_ok=True)
+
         self.index = None
         self.metadata = []
         self.embedding_model = embedding_model
@@ -24,6 +24,7 @@ class FaissVectorStore:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         print(f"[INFO] Loaded embedding model: {embedding_model}")
+        print(f"[INFO] Vector store directory: {self.persist_dir}")
 
     def build_from_documents(self, documents: List[Any]):
         if not documents:

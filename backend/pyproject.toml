@@ -8,6 +8,7 @@ dependencies = [
     "chromadb>=1.5.9",
     "cryptography>=50.0.2",
     "faiss-cpu>=1.15.1",
+    "fastapi>=0.162.0",
     "ipykernel>=7.4.0",
     "langchain>=1.4.5",
     "langchain-community>=0.4.2",
@@ -23,6 +24,7 @@ dependencies = [
     "sentence-transformers>=6.1.0",
     "tqdm>=4.70.1",
     "typesense>=2.1.0",
+    "uvicorn>=0.54.0",
 ]
 
 [tool.pyrefly]

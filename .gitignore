@@ -6,5 +6,7 @@ data/
 faiss_store/
 notebook/
 *.ipynb
+node_modules/
+
 
 
