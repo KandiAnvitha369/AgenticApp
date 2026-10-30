@@ -3,3 +3,8 @@
 __pycache__/
 data/
 .env
+faiss_store/
+notebook/
+*.ipynb
+
+
