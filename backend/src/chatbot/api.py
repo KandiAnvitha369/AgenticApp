@@ -1,18 +1,22 @@
 """
-FastAPI layer on top of the existing RAG pipeline (RAGSearch -> FaissVectorStore + Groq LLM).
-Existing files are untouched; this only imports them.
+FastAPI layer on top of the RAG pipeline (RAGSearch -> FaissVectorStore + Groq LLM)
+with AWS S3 integration via boto3 for cloud document storage, ingestion listing, and vector DB sync.
 
 Run (from the src/ folder):
     uvicorn chatbot.api:app --reload --port 8000
 """
 from contextlib import asynccontextmanager
+from pathlib import Path
+import shutil
 from typing import List, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from chatbot.search import RAGSearch
+from chatbot.s3_service import get_s3_service
+from chatbot.data_loader import load_documents_from_paths
 
 SYSTEM_PROMPT = """You are a friendly, exam-focused tutor for students preparing for the SSC CGL exam.
 Current subject in the knowledge base: History.
@@ -30,7 +34,7 @@ state = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Loads the embedding model + FAISS index once at startup (builds the index from data/ if missing).
+    # Loads the embedding model + FAISS index once at startup (builds the index from S3/data if missing).
     state["rag"] = RAGSearch()
     yield
     state.clear()
@@ -70,7 +74,142 @@ class ChatResponse(BaseModel):
 @app.get("/health")
 def health():
     rag = state.get("rag")
-    return {"status": "ok" if rag else "starting"}
+    has_index = rag is not None and rag.vectorstore.index is not None
+    vector_count = len(rag.vectorstore.metadata) if (rag and rag.vectorstore.metadata) else 0
+    return {
+        "status": "ok" if rag else "starting",
+        "index_ready": has_index,
+        "vector_count": vector_count,
+    }
+
+
+@app.get("/documents")
+def list_documents():
+    """
+    List all documents currently stored in the AWS S3 knowledge base bucket.
+    """
+    try:
+        s3 = get_s3_service()
+        docs = s3.list_documents()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch documents from S3: {str(e)}",
+        )
+
+    total_size = sum(d["size_bytes"] for d in docs)
+    rag = state.get("rag")
+    vector_count = len(rag.vectorstore.metadata) if (rag and rag.vectorstore.metadata) else 0
+
+    return {
+        "documents": docs,
+        "total_files": len(docs),
+        "total_size_bytes": total_size,
+        "vector_count": vector_count,
+        "s3_bucket": s3.bucket_name,
+    }
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Upload a document. The file is stored in AWS S3 (via boto3) and cached locally for indexing.
+    """
+    project_root = Path(__file__).resolve().parent.parent.parent
+    data_dir = project_root / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    allowed_extensions = {".pdf", ".txt", ".csv", ".xlsx", ".docx", ".json"}
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{suffix}'. Allowed types: {', '.join(sorted(allowed_extensions))}",
+        )
+
+    safe_filename = Path(file.filename).name
+    destination = data_dir / safe_filename
+
+    # 1. Save locally
+    try:
+        with destination.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file locally: {str(e)}")
+
+    size_bytes = destination.stat().st_size
+
+    # 2. Upload to S3 using boto3
+    try:
+        s3 = get_s3_service()
+        s3.upload_file(destination, safe_filename)
+    except Exception as e:
+        # Clean up local file if S3 upload fails
+        if destination.exists():
+            destination.unlink()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload '{safe_filename}' to S3: {str(e)}",
+        )
+
+    return {
+        "status": "success",
+        "filename": safe_filename,
+        "size_bytes": size_bytes,
+        "s3_bucket": s3.bucket_name,
+        "message": f"'{safe_filename}' uploaded to S3 bucket '{s3.bucket_name}' successfully.",
+    }
+
+
+@app.post("/rebuild-vectorstore")
+def rebuild_vectorstore():
+    """
+    Sync all files from AWS S3 storage, parse documents, and rebuild the vector store.
+    """
+    rag = state.get("rag")
+    if rag is None:
+        raise HTTPException(status_code=503, detail="RAG system is not initialized.")
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    data_dir = project_root / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Sync files from S3 bucket to local repository directory
+    try:
+        s3 = get_s3_service()
+        synced_files = s3.sync_s3_to_local(data_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to sync documents from S3: {str(e)}")
+
+    if not synced_files:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No documents found in S3 bucket '{s3.bucket_name}' to index. Upload documents first.",
+        )
+
+    # 2. Load and parse the synced S3 documents
+    try:
+        docs = load_documents_from_paths(synced_files)
+        if not docs:
+            raise HTTPException(
+                status_code=400,
+                detail="No readable content found in synced S3 documents to index.",
+            )
+
+        # 3. Build and persist FAISS index
+        rag.vectorstore.build_from_documents(docs)
+        vector_count = len(rag.vectorstore.metadata) if rag.vectorstore.metadata else 0
+        return {
+            "status": "success",
+            "message": f"Vector store successfully synced and rebuilt from S3 ({len(synced_files)} files).",
+            "document_count": len(docs),
+            "vector_count": vector_count,
+            "s3_bucket": s3.bucket_name,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rebuild vector store: {str(e)}")
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -79,7 +218,7 @@ def chat(req: ChatRequest):
     if rag is None:
         raise HTTPException(status_code=503, detail="Model is still loading, try again shortly.")
     if rag.vectorstore.index is None:
-        raise HTTPException(status_code=503, detail="Vector store is empty. Add files to data/ and rebuild.")
+        raise HTTPException(status_code=503, detail="Vector store is empty. Add files to S3 and rebuild.")
 
     results = rag.vectorstore.query(req.message, top_k=req.top_k)
     hits = [r for r in results if r["metadata"] and r["metadata"].get("text")]

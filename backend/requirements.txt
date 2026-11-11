@@ -13,3 +13,4 @@ typesense
 langchain_openai
 langgraph
 cryptography
+boto3

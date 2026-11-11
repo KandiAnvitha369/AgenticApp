@@ -40,6 +40,9 @@ class FaissVectorStore:
 
         embeddings = emb_pipe.embed_chunks(chunks)
         metadatas = [{"text": chunk.page_content} for chunk in chunks]
+        # Reset index and metadata to ensure a fresh build without duplicates
+        self.index = None
+        self.metadata = []
         self.add_embeddings(np.array(embeddings).astype('float32'), metadatas)
         self.save()
         print(f"[INFO] Vector store built and saved to {self.persist_dir}")

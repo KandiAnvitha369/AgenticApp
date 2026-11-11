@@ -1,8 +1,11 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from chatbot.vectorstore import FaissVectorStore
 from langchain_groq import ChatGroq
 
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 load_dotenv()
 
 class RAGSearch:
@@ -12,9 +15,23 @@ class RAGSearch:
         faiss_path = os.path.join(self.vectorstore.persist_dir, "faiss.index")
         meta_path = os.path.join(self.vectorstore.persist_dir, "metadata.pkl")
         if not (os.path.exists(faiss_path) and os.path.exists(meta_path)):
-            from chatbot.data_loader import load_all_documents
-            docs = load_all_documents("data")
-            self.vectorstore.build_from_documents(docs)
+            try:
+                from chatbot.s3_service import get_s3_service
+                from chatbot.data_loader import load_documents_from_paths
+                s3 = get_s3_service()
+                project_root = Path(__file__).resolve().parent.parent.parent
+                data_dir = project_root / "data"
+                synced_files = s3.sync_s3_to_local(data_dir)
+                if synced_files:
+                    docs = load_documents_from_paths(synced_files)
+                    self.vectorstore.build_from_documents(docs)
+                else:
+                    from chatbot.data_loader import load_all_documents
+                    docs = load_all_documents("data")
+                    if docs:
+                        self.vectorstore.build_from_documents(docs)
+            except Exception as e:
+                print(f"[WARN] Failed to build vectorstore from S3/local at startup: {e}")
         else:
             self.vectorstore.load()
         groq_api_key = os.getenv("GROQ_API_KEY", "")

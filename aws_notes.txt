@@ -1,0 +1,30 @@
+winget install -e --id Amazon.AWSCLI
+
+
+aws --version
+aws-cli/2.40.0 Python/3.14.8 Windows/11 exe/AMD64
+
+
+aws configure
+
+
+Tip: You can deliver temporary credentials to the AWS CLI using your AWS Console session by running the command 'aws login'.
+
+
+AWS Access Key : your_aws_access_key_id
+AWS Secret Access Key :your_aws_secret_access_key
+Default region : your_region
+Default ouput format : json
+
+
+
+
+aws sts get-caller-identity
+{
+    "UserId": "AIDAVPS3ECAD4QLLTS4GW",
+    "Account": "377074487303",
+    "Arn": "arn:aws:iam::377074487303:user/dev"
+}
+
+
+arn:aws:s3:::upload-files-377074487303-ap-southeast-2-an
