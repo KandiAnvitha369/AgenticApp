@@ -1,10 +1,3 @@
-"""
-FastAPI layer on top of the RAG pipeline (RAGSearch -> FaissVectorStore + Groq LLM)
-with AWS S3 integration via boto3 for cloud document storage, ingestion listing, and vector DB sync.
-
-Run (from the src/ folder):
-    uvicorn chatbot.api:app --reload --port 8000
-"""
 from contextlib import asynccontextmanager
 from pathlib import Path
 import shutil
@@ -210,6 +203,33 @@ def rebuild_vectorstore():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to rebuild vector store: {str(e)}")
+
+
+@app.post("/process-sqs-jobs")
+def process_sqs_jobs(max_messages: int = 5):
+    """
+    Polls the SQS queue for newly uploaded files from Lambda/S3,
+    downloads and indexes them incrementally into the vector database.
+    """
+    from chatbot.sqs_consumer import SQSConsumer
+
+    rag = state.get("rag")
+    vectorstore = rag.vectorstore if rag else None
+
+    consumer = SQSConsumer(vectorstore=vectorstore)
+    processed = consumer.poll_messages(max_messages=max_messages, wait_time_seconds=5)
+
+    # Reload vectorstore into memory if new items were indexed
+    if processed > 0 and rag:
+        rag.vectorstore.load()
+
+    total_vectors = len(rag.vectorstore.metadata) if (rag and rag.vectorstore.metadata) else 0
+
+    return {
+        "status": "success",
+        "processed_jobs": processed,
+        "total_vectors": total_vectors,
+    }
 
 
 @app.post("/chat", response_model=ChatResponse)

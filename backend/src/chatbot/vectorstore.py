@@ -47,6 +47,42 @@ class FaissVectorStore:
         self.save()
         print(f"[INFO] Vector store built and saved to {self.persist_dir}")
 
+    def add_documents(self, documents: List[Any]):
+        """
+        Incrementally add new documents into the existing Faiss index and persist to disk.
+        """
+        if not documents:
+            print("[WARN] No documents provided to add to vector store.")
+            return
+
+        # Ensure existing index is loaded if not already in memory
+        if self.index is None:
+            self.load()
+
+        print(f"[INFO] Incrementally indexing {len(documents)} document chunk(s)...")
+        emb_pipe = EmbeddingPipeline(
+            model_name=self.embedding_model,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+        )
+        chunks = emb_pipe.chunk_documents(documents)
+        if not chunks:
+            print("[WARN] No chunks generated from documents.")
+            return
+
+        embeddings = emb_pipe.embed_chunks(chunks)
+        metadatas = [
+            {
+                "text": chunk.page_content,
+                "source": chunk.metadata.get("source", ""),
+                "page": chunk.metadata.get("page", 0),
+            }
+            for chunk in chunks
+        ]
+        self.add_embeddings(np.array(embeddings).astype("float32"), metadatas)
+        self.save()
+        print(f"[INFO] Successfully appended to vector store. Total vectors: {len(self.metadata)}")
+
     def add_embeddings(self, embeddings: np.ndarray, metadatas: List[Any] = None):
         if embeddings is None or embeddings.size == 0:
             print("[WARN] No embeddings provided to add to Faiss index.")
