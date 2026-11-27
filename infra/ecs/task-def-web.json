@@ -1,0 +1,73 @@
+{
+  "family": "rag-chatbot-web",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "3072",
+  "executionRoleArn": "arn:aws:iam::377074487303:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::377074487303:role/ecsTaskRole",
+
+  "volumes": [
+    {
+      "name": "efs-faiss-store",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-003e4c4a500b481ba",
+        "rootDirectory": "/faiss_store",
+        "transitEncryption": "ENABLED"
+      }
+    }
+  ],
+
+  "containerDefinitions": [
+    {
+      "name": "rag-chatbot-web",
+      "image": "377074487303.dkr.ecr.ap-southeast-2.amazonaws.com/rag-chatbot:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "command": [
+        "uvicorn", "chatbot.api:app", "--host", "0.0.0.0", "--port", "8000"
+      ],
+      "environment": [
+        { "name": "FAISS_PERSIST_DIR",  "value": "/mnt/efs/faiss_store" },
+        { "name": "ENV",               "value": "production" },
+        { "name": "PYTHONPATH",         "value": "/app/src" },
+        { "name": "PYTHONUNBUFFERED",   "value": "1" }
+      ],
+      "secrets": [
+        { "name": "GROQ_API_KEY",            "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/GROQ_API_KEY" },
+        { "name": "ADMIN_API_KEY",            "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/ADMIN_API_KEY" },
+        { "name": "AWS_ACCESS_KEY_ID",        "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/AWS_ACCESS_KEY_ID" },
+        { "name": "AWS_SECRET_ACCESS_KEY",    "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/AWS_SECRET_ACCESS_KEY" },
+        { "name": "S3_BUCKET_NAME",           "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/S3_BUCKET_NAME" },
+        { "name": "SQS_QUEUE_URL",            "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/SQS_QUEUE_URL" }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "efs-faiss-store",
+          "containerPath": "/mnt/efs/faiss_store",
+          "readOnly": false
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 90
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/rag-chatbot-web",
+          "awslogs-region": "ap-southeast-2",
+          "awslogs-stream-prefix": "web"
+        }
+      }
+    }
+  ]
+}

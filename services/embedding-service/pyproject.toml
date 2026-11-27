@@ -1,0 +1,13 @@
+[project]
+name = "embedding-service"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.110.0",
+    "pydantic>=2.7.0",
+    "sentence-transformers>=3.0.0",
+    "torch>=2.2.0",
+    "uvicorn[standard]>=0.29.0",
+]

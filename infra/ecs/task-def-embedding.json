@@ -1,0 +1,45 @@
+{
+  "family": "rag-chatbot-embedding",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::377074487303:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::377074487303:role/ecsTaskRole",
+
+  "containerDefinitions": [
+    {
+      "name": "embedding-service",
+      "image": "377074487303.dkr.ecr.ap-southeast-2.amazonaws.com/rag-chatbot-embedding:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8001,
+          "protocol": "tcp"
+        }
+      ],
+      "command": [
+        "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001"
+      ],
+      "environment": [
+        { "name": "MODEL_NAME", "value": "all-MiniLM-L6-v2" },
+        { "name": "PORT",       "value": "8001" }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\" || exit 1"],
+        "interval": 20,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/rag-chatbot-embedding",
+          "awslogs-region": "ap-southeast-2",
+          "awslogs-stream-prefix": "embedding"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# Ignore version control, IDE, caches, and local env files
+.git
+.gitignore
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env
+.env.*
+!.env.example
+
+# Ignore local data and vector store (EFS provides storage in production)
+data/
+faiss_store/
+
+# Ignore Python virtualenv
+.venv/
+venv/
+
+# Ignore build artifacts
+*.lock
+notebook/

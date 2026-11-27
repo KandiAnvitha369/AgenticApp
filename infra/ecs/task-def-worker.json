@@ -1,0 +1,60 @@
+{
+  "family": "rag-chatbot-worker",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "3072",
+  "executionRoleArn": "arn:aws:iam::377074487303:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::377074487303:role/ecsTaskRole",
+
+  "volumes": [
+    {
+      "name": "efs-faiss-store",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-003e4c4a500b481ba",
+        "rootDirectory": "/faiss_store",
+        "transitEncryption": "ENABLED"
+      }
+    }
+  ],
+
+  "containerDefinitions": [
+    {
+      "name": "rag-chatbot-worker",
+      "image": "377074487303.dkr.ecr.ap-southeast-2.amazonaws.com/rag-chatbot-worker:latest",
+      "essential": true,
+      "command": [
+        "python", "-m", "consumer.sqs_consumer"
+      ],
+      "environment": [
+        { "name": "FAISS_PERSIST_DIR",  "value": "/mnt/efs/faiss_store" },
+        { "name": "AWS_REGION",         "value": "ap-southeast-2" },
+        { "name": "ENV",               "value": "production" },
+        { "name": "PYTHONPATH",         "value": "/app" },
+        { "name": "PYTHONUNBUFFERED",   "value": "1" }
+      ],
+      "secrets": [
+        { "name": "AWS_ACCESS_KEY_ID",        "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/AWS_ACCESS_KEY_ID" },
+        { "name": "AWS_SECRET_ACCESS_KEY",    "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/AWS_SECRET_ACCESS_KEY" },
+        { "name": "S3_BUCKET_NAME",           "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/S3_BUCKET_NAME" },
+        { "name": "SQS_QUEUE_URL",            "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/SQS_QUEUE_URL" },
+        { "name": "SQS_QUEUE_NAME",           "valueFrom": "arn:aws:ssm:ap-southeast-2:377074487303:parameter/rag-chatbot/SQS_QUEUE_NAME" }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "efs-faiss-store",
+          "containerPath": "/mnt/efs/faiss_store",
+          "readOnly": false
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/rag-chatbot-worker",
+          "awslogs-region": "ap-southeast-2",
+          "awslogs-stream-prefix": "worker"
+        }
+      }
+    }
+  ]
+}

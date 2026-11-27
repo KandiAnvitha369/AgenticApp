@@ -1,16 +1,27 @@
+# ── Core LangChain stack ──────────────────────────────────────────────────────
 langchain
 langchain-core
 langchain-community
 langchain-text-splitters
-pypdf
-pymupdf
-sentence-transformers
-faiss-cpu
-chromadb
-langchain-groq
-python-dotenv
-typesense
-langchain_openai
-langgraph
-cryptography
+
+# ── AWS: Bedrock LLM + Embeddings + S3 + SQS ─────────────────────────────────
+# langchain-aws provides ChatBedrock and BedrockEmbeddings wrappers.
+# boto3 handles all underlying Bedrock Runtime, S3, and SQS calls.
+# No model weights are downloaded — inference runs in AWS.
+langchain-aws
 boto3
+
+# ── Document loaders ──────────────────────────────────────────────────────────
+pypdf
+cryptography  # Required by pypdf for AES-encrypted PDF streams
+
+# ── Vector store ──────────────────────────────────────────────────────────────
+faiss-cpu
+
+# ── Web API ───────────────────────────────────────────────────────────────────
+fastapi
+uvicorn
+python-multipart
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv

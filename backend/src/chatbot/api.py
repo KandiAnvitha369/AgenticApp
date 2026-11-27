@@ -1,15 +1,38 @@
+import os
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
-import shutil
-from typing import List, Literal
+from typing import List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from chatbot.search import RAGSearch
 from chatbot.s3_service import get_s3_service
 from chatbot.data_loader import load_documents_from_paths
+
+def verify_admin_key(x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key")):
+    """
+    Guards administrative and internal debug endpoints.
+    Requires the request header 'X-Admin-Key' to match the ADMIN_API_KEY environment variable.
+    """
+    configured_key = os.getenv("ADMIN_API_KEY", "").strip()
+    if not configured_key:
+        is_prod = os.getenv("ENV", "").lower() == "production"
+        if is_prod:
+            raise HTTPException(
+                status_code=403,
+                detail="Admin debug endpoints are disabled in production because ADMIN_API_KEY is not configured.",
+            )
+        return True
+
+    if x_admin_key != configured_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: invalid or missing 'X-Admin-Key' header.",
+        )
+    return True
 
 SYSTEM_PROMPT = """You are a friendly, exam-focused tutor for students preparing for the SSC CGL exam.
 Current subject in the knowledge base: History.
@@ -205,30 +228,67 @@ def rebuild_vectorstore():
         raise HTTPException(status_code=500, detail=f"Failed to rebuild vector store: {str(e)}")
 
 
-@app.post("/process-sqs-jobs")
-def process_sqs_jobs(max_messages: int = 5):
+@app.post("/process-sqs-jobs", tags=["Admin/Debug"])
+def process_sqs_jobs(
+    max_messages: int = 5,
+    _auth: bool = Depends(verify_admin_key),
+):
     """
-    Polls the SQS queue for newly uploaded files from Lambda/S3,
-    downloads and indexes them incrementally into the vector database.
+    [ADMIN / INTERNAL DEBUG ONLY]
+    In production on ECS, the independent SQS consumer worker handles continuous background processing.
+    Use this endpoint strictly for manual testing, administrative draining, or debug scenarios.
+    Requires header: 'X-Admin-Key: <ADMIN_API_KEY>'
     """
-    from chatbot.sqs_consumer import SQSConsumer
+    try:
+        from consumer.sqs_consumer import SQSConsumer
+        rag = state.get("rag")
+        vectorstore = rag.vectorstore if rag else None
 
+        consumer = SQSConsumer(vectorstore=vectorstore)
+        processed = consumer.poll_messages(max_messages=max_messages, wait_time_seconds=5)
+
+        # Reload vectorstore into memory if new items were indexed
+        if processed > 0 and rag:
+            rag.vectorstore.load()
+
+        total_vectors = len(rag.vectorstore.metadata) if (rag and rag.vectorstore.metadata) else 0
+
+        return {
+            "status": "success",
+            "processed_jobs": processed,
+            "total_vectors": total_vectors,
+            "mode": "admin_debug_drain",
+        }
+    except (ImportError, Exception) as e:
+        rag = state.get("rag")
+        total_vectors = len(rag.vectorstore.metadata) if (rag and rag.vectorstore and rag.vectorstore.metadata) else 0
+        return {
+            "status": "decoupled",
+            "message": f"SQS consumer runs as an independent ECS worker (rag-chatbot-worker). Local trigger notice: {e}",
+            "total_vectors": total_vectors,
+        }
+
+
+@app.post("/admin/reload-vectorstore", tags=["Admin/Debug"])
+def reload_vectorstore(_auth: bool = Depends(verify_admin_key)):
+    """
+    [ADMIN / INTERNAL DEBUG ONLY]
+    Forces the API container to reload the FAISS index and metadata
+    from the shared Amazon EFS storage volume into memory.
+    Requires header: 'X-Admin-Key: <ADMIN_API_KEY>'
+    """
     rag = state.get("rag")
-    vectorstore = rag.vectorstore if rag else None
+    if not rag:
+        raise HTTPException(status_code=503, detail="RAG system is not initialized.")
 
-    consumer = SQSConsumer(vectorstore=vectorstore)
-    processed = consumer.poll_messages(max_messages=max_messages, wait_time_seconds=5)
-
-    # Reload vectorstore into memory if new items were indexed
-    if processed > 0 and rag:
-        rag.vectorstore.load()
-
-    total_vectors = len(rag.vectorstore.metadata) if (rag and rag.vectorstore.metadata) else 0
+    success = rag.vectorstore.load()
+    vector_count = len(rag.vectorstore.metadata) if (rag and rag.vectorstore.metadata) else 0
 
     return {
-        "status": "success",
-        "processed_jobs": processed,
-        "total_vectors": total_vectors,
+        "status": "success" if success else "failed",
+        "message": "Vector store reloaded from storage.",
+        "vector_count": vector_count,
+        "persist_dir": rag.vectorstore.persist_dir,
     }
 
 
